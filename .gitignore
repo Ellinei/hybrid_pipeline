@@ -1,0 +1,49 @@
+# Environment
+.env
+
+# Python
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Type checking
+.mypy_cache/
+
+# Linting
+.ruff_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+airflow/logs/
+airflow/plugins/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# dbt
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/

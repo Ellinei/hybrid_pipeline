@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker compose *)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(poetry check *)",
+      "Bash(python3 -c \"import tomllib; tomllib.loads\\(open\\('E:/Project/hybrid-trading-pipeline/pyproject.toml'\\).read\\(\\)\\); print\\('TOML valid'\\)\")",
+      "PowerShell(python -c \"import tomllib; data = tomllib.loads\\(open\\('E:/Project/hybrid-trading-pipeline/pyproject.toml'\\).read\\(\\)\\); print\\('TOML valid'\\); print\\('Sections:', list\\(data.keys\\(\\)\\)\\)\")"
+    ]
+  }
+}
