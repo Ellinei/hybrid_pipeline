@@ -5,7 +5,11 @@
       "Bash(echo \"EXIT:$?\")",
       "Bash(poetry check *)",
       "Bash(python3 -c \"import tomllib; tomllib.loads\\(open\\('E:/Project/hybrid-trading-pipeline/pyproject.toml'\\).read\\(\\)\\); print\\('TOML valid'\\)\")",
-      "PowerShell(python -c \"import tomllib; data = tomllib.loads\\(open\\('E:/Project/hybrid-trading-pipeline/pyproject.toml'\\).read\\(\\)\\); print\\('TOML valid'\\); print\\('Sections:', list\\(data.keys\\(\\)\\)\\)\")"
+      "PowerShell(python -c \"import tomllib; data = tomllib.loads\\(open\\('E:/Project/hybrid-trading-pipeline/pyproject.toml'\\).read\\(\\)\\); print\\('TOML valid'\\); print\\('Sections:', list\\(data.keys\\(\\)\\)\\)\")",
+      "Bash(docker volume *)",
+      "PowerShell($p = Get-CimInstance Win32_Process -Filter \"ProcessId=7120\"; \"$\\($p.ProcessId\\)`t$\\($p.Name\\)`t$\\($p.ExecutablePath\\)`t$\\($p.CommandLine\\)\")",
+      "Bash(timeout 15 sh -c 'until docker compose exec -T postgres pg_isready -U trader >/dev/null 2>&1; do sleep 1; done')",
+      "Bash(PGPASSWORD=test psql -h localhost -p 5433 -U trader -d trading -c \"SELECT 'connection works' AS status;\")"
     ]
   }
 }

@@ -5,6 +5,7 @@ description = "Production-grade hybrid streaming + batch data pipeline for AI-dr
 authors = ["Fah"]
 license = "MIT"
 readme = "README.md"
+package-mode= false
 
 [tool.poetry.dependencies]
 python = "^3.11"
@@ -13,7 +14,6 @@ kafka-python = "^2.0.2"
 psycopg2-binary = "^2.9.9"
 sqlalchemy = "^2.0"
 pandas = "^2.2"
-pandas-ta = "^0.3.14b"
 xgboost = "^2.0"
 scikit-learn = "^1.4"
 streamlit = "^1.32"
