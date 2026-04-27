@@ -47,8 +47,29 @@ class Symbol(Base):
     created_at = Column(TIMESTAMP(timezone=True), server_default=text("now()"))
 
 
+class RealtimeFeatures(Base):
+    """raw.realtime_features — per-symbol feature snapshot, written every 60s.
+
+    Populated by streaming.feature_processor from the price-ticks Kafka topic.
+    Converted to a TimescaleDB hypertable on first creation.
+    """
+
+    __tablename__ = "realtime_features"
+    __table_args__ = {"schema": "raw"}
+
+    symbol = Column(VARCHAR(20), primary_key=True, nullable=False)
+    timestamp = Column(TIMESTAMP(timezone=True), primary_key=True, nullable=False)
+    last_price = Column(NUMERIC(20, 8))
+    vwap_1m = Column(NUMERIC(20, 8))
+    vwap_5m = Column(NUMERIC(20, 8))
+    price_change_1m = Column(NUMERIC(10, 6))
+    price_change_5m = Column(NUMERIC(10, 6))
+    volatility_1m = Column(NUMERIC(20, 8))
+    trade_count_1m = Column(INTEGER)
+
+
 def create_all_tables(engine) -> None:
-    """Create all tables, hypertable, and index — safe to call repeatedly."""
+    """Create all tables, hypertables, and indexes — safe to call repeatedly."""
     Base.metadata.create_all(engine)
     with engine.connect() as conn:
         conn.execute(
@@ -60,6 +81,12 @@ def create_all_tables(engine) -> None:
             text(
                 "CREATE INDEX IF NOT EXISTS idx_ohlcv_symbol_ts_desc"
                 " ON raw.ohlcv (symbol, timestamp DESC)"
+            )
+        )
+        conn.execute(
+            text(
+                "SELECT create_hypertable('raw.realtime_features', 'timestamp',"
+                " if_not_exists => TRUE)"
             )
         )
         conn.commit()

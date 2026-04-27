@@ -33,12 +33,15 @@ services:
       - --node-id
       - "0"
       - --check=false
+      # Two listeners: INTERNAL for docker-network services, EXTERNAL for host scripts.
+      # Host clients must connect to localhost:19092; internal services use redpanda:9092.
       - --kafka-addr
-      - PLAINTEXT://0.0.0.0:9092
+      - INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:19092
       - --advertise-kafka-addr
-      - PLAINTEXT://redpanda:9092
+      - INTERNAL://redpanda:9092,EXTERNAL://localhost:19092
     ports:
       - "9092:9092"
+      - "19092:19092"
       - "9644:9644"
     volumes:
       - redpanda_data:/var/lib/redpanda/data

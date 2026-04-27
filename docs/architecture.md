@@ -78,3 +78,19 @@ Cron runs jobs in isolation with no dependency management, retry logic, or obser
 | TLS/Auth | None between services | mTLS on Kafka, Airflow behind auth proxy |
 
 These gaps are intentional for Phase 1. The scaffold is designed so each can be addressed incrementally without restructuring the codebase.
+
+Local Development Notes
+Windows: PostgreSQL Port Conflict
+If you have PostgreSQL installed natively on Windows, it will also listen on port 5432 by default. This conflicts with the Docker Postgres container, causing connection errors like:
+FATAL: password authentication failed for user "trader"
+Even though the error looks like a password problem, the real cause is that your Python process is connecting to the Windows-native Postgres (port 5432) instead of the Docker Postgres container.
+Solution applied in this project: Docker Postgres is mapped to port 5433 instead:
+yaml# docker-compose.yml
+postgres:
+  ports:
+    - "5433:5432"   # host:container
+env# .env
+POSTGRES_PORT=5433
+This way both can coexist without conflict:
+InstancePortUsed byWindows native Postgres5432Local Windows appsDocker Postgres (TimescaleDB)5433This project
+If you don't have native Postgres installed, you can change this back to 5432:5432 — no other changes needed.

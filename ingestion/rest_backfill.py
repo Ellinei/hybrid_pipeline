@@ -15,6 +15,7 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import quote_plus
 
 import structlog
 from dotenv import load_dotenv
@@ -167,7 +168,6 @@ def run_backfill(
     interval: str = "1h",
 ) -> None:
     """Orchestrate full backfill: init DB, iterate symbols, print summary."""
-    import psycopg2
     from sqlalchemy import create_engine
 
     from ingestion.binance_client import BinanceClientWrapper
@@ -175,18 +175,21 @@ def run_backfill(
 
     load_dotenv()
 
-    # 1. Ensure schema + hypertable exist
+    # 1. Ensure schema + hypertable exist.
+    # quote_plus the password so symbols like @, /, :, # don't break the URL.
     engine = create_engine(
         "postgresql+psycopg2://{user}:{pw}@{host}:{port}/{db}".format(
-            user=os.getenv("POSTGRES_USER", "trader"),
-            pw=os.getenv("POSTGRES_PASSWORD", ""),
+            user=quote_plus(os.getenv("POSTGRES_USER", "trader")),
+            pw=quote_plus(os.getenv("POSTGRES_PASSWORD", "")),
             host=os.getenv("POSTGRES_HOST", "localhost"),
             port=os.getenv("POSTGRES_PORT", "5432"),
             db=os.getenv("POSTGRES_DB", "trading"),
         )
     )
-    create_all_tables(engine)
-    engine.dispose()
+    try:
+        create_all_tables(engine)
+    finally:
+        engine.dispose()
 
     client = BinanceClientWrapper()
     conn = _get_db_connection()

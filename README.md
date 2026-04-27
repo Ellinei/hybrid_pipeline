@@ -37,12 +37,16 @@ make up
 
 ## Service URLs
 
-| Service | URL |
-|---|---|
-| Airflow UI | http://localhost:8080 |
-| Redpanda Console | http://localhost:8085 |
-| Redpanda (Kafka) | localhost:9092 |
-| PostgreSQL | localhost:5432 |
+| Service | Host (external) | Docker network (internal) |
+|---|---|---|
+| Airflow UI | http://localhost:8080 | — |
+| Redpanda Console | http://localhost:8085 | — |
+| Redpanda (Kafka) | `localhost:19092` | `redpanda:9092` |
+| PostgreSQL (TimescaleDB) | `localhost:5433` | `postgres:5432` |
+
+> Postgres is mapped to `5433` to avoid colliding with a native Windows postgres install.
+> Redpanda runs two listeners — host scripts must use `localhost:19092`, services on the
+> docker network use `redpanda:9092`. See [docs/architecture.md](docs/architecture.md).
 
 ## Project Structure
 
@@ -72,11 +76,12 @@ hybrid-trading-pipeline/
 ## Roadmap
 
 - [x] **Phase 1** — Project scaffold, Docker services, TimescaleDB schema init
-- [ ] **Phase 2** — Binance WebSocket ingestion, Redpanda topics, raw data storage
-- [ ] **Phase 3** — dbt feature engineering, XGBoost signal model, Airflow DAGs
-- [ ] **Phase 4** — Reddit sentiment ingestion, **FinBERT** NLP scoring
-- [ ] **Phase 5** — **Multi-signal fusion**, risk management, live order execution
-- [ ] **Phase 6** — Streamlit monitoring dashboard, alerting, performance reporting
+- [x] **Phase 2** — Binance REST client, OHLCV historical backfill, validation script
+- [x] **Phase 3** — Binance WebSocket producer, Kafka real-time feature processor
+- [ ] **Phase 4** — dbt feature engineering, XGBoost signal model, Airflow DAGs
+- [ ] **Phase 5** — Reddit sentiment ingestion, **FinBERT** NLP scoring
+- [ ] **Phase 6** — **Multi-signal fusion**, risk management, live order execution
+- [ ] **Phase 7** — Streamlit monitoring dashboard, alerting, performance reporting
 
 ## License
 
