@@ -35,3 +35,6 @@ fmt: ## Format code with ruff
 
 psql: ## Open psql shell in postgres container
 	docker compose exec postgres psql -U $(POSTGRES_USER) -d $(POSTGRES_DB)
+
+deps: ## Sync venv after pyproject.toml changes
+    poetry lock && poetry install
