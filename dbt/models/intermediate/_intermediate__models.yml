@@ -1,0 +1,14 @@
+version: 2
+
+models:
+  - name: int_returns
+    description: "Log returns and percentage price changes over multiple horizons"
+    columns:
+      - name: symbol
+        data_tests: [not_null]
+      - name: timestamp
+        data_tests: [not_null]
+      - name: log_return_1h
+        description: "Natural log of close/close_prev_1h — null for first row per symbol"
+      - name: pct_change_1h
+        description: "Percentage price change over 1 hour"

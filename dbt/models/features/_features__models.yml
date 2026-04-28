@@ -1,0 +1,25 @@
+version: 2
+
+models:
+  - name: feat_technical
+    description: "Technical indicators for the signal engine — rebuilt as a table on each dbt run"
+    columns:
+      - name: symbol
+        data_tests: [not_null]
+      - name: timestamp
+        data_tests: [not_null]
+      - name: rsi_14_proxy
+        description: "Position of close within 14-period high/low range (0–100)"
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+              inclusive: true
+      - name: bb_zscore
+        description: "Bollinger Band z-score: (close - SMA20) / σ20"
+      - name: macd_line
+        description: "12-period MA minus 26-period MA"
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [symbol, timestamp]

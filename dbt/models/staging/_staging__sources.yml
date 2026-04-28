@@ -1,0 +1,22 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: raw
+    tables:
+      - name: ohlcv
+        description: "Raw OHLCV bars from Binance REST API, written by ingestion.rest_backfill"
+        loaded_at_field: timestamp
+        freshness:
+          warn_after:  {count: 25, period: hour}
+          error_after: {count: 48, period: hour}
+        columns:
+          - name: symbol
+            description: "Trading pair e.g. BTCUSDT"
+            data_tests: [not_null]
+          - name: timestamp
+            description: "Candle open time (UTC)"
+            data_tests: [not_null]
+          - name: close
+            description: "Closing price"
+            data_tests: [not_null]

@@ -13,7 +13,8 @@
       "Bash(poetry lock *)",
       "Bash(poetry install *)",
       "Bash(grep -E \"\\\\.env$\")",
-      "Bash(xargs -I{} grep -l -E \"\\(BINANCE_API_KEY=[A-Za-z0-9]{20}|BINANCE_API_SECRET=[A-Za-z0-9]{20}\\)\" {})"
+      "Bash(xargs -I{} grep -l -E \"\\(BINANCE_API_KEY=[A-Za-z0-9]{20}|BINANCE_API_SECRET=[A-Za-z0-9]{20}\\)\" {})",
+      "Bash(echo \"COMPOSE_EXIT:$?\")"
     ]
   }
 }

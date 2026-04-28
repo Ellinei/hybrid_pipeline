@@ -1,0 +1,22 @@
+name: 'hybrid_trading'
+version: '1.0.0'
+config-version: 2
+profile: 'hybrid_trading'
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  hybrid_trading:
+    staging:
+      +materialized: view
+      +schema: staging
+    intermediate:
+      +materialized: view
+      +schema: staging
+    features:
+      +materialized: table
+      +schema: features
