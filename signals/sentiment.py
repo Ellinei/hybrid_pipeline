@@ -1,17 +1,18 @@
-"""Reddit sentiment signal using VADER.
+"""Crypto news sentiment signal using public RSS feeds + VADER.
 
-Fetches recent posts from crypto subreddits, scores with VADER compound
-sentiment, and weighs by Reddit post score (upvotes).
+No API credentials required — RSS is fully public.  feedparser handles
+malformed XML gracefully, and a single feed failure (HTTP error, parse
+error) is logged and skipped without affecting other feeds.
 
-Degrades gracefully: if Reddit credentials are missing or the API is
-unavailable, ``generate_signal`` returns HOLD with confidence 0.4.
+Add more feed sources by appending to ``RSS_FEEDS`` — no other code changes.
 """
 from __future__ import annotations
 
-import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from time import mktime
 from typing import Any
 
+import feedparser
 import structlog
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
@@ -21,99 +22,105 @@ log = structlog.get_logger()
 
 
 class SentimentSignalGenerator:
-    SUBREDDITS = ["cryptocurrency", "bitcoin", "ethtrader", "solana"]
+    """Score recent crypto news with VADER and emit a BUY/SELL/HOLD signal."""
+
+    RSS_FEEDS: dict[str, list[str]] = {
+        "general": [
+            "https://feeds.feedburner.com/CoinDesk",
+            "https://cointelegraph.com/rss",
+            "https://cryptopanic.com/news/rss/",
+        ],
+    }
 
     SYMBOL_KEYWORDS: dict[str, list[str]] = {
-        "BTCUSDT": ["bitcoin", "btc", "bitcoin price"],
-        "ETHUSDT": ["ethereum", "eth", "ether"],
-        "SOLUSDT": ["solana", "sol", "solana price"],
+        "BTCUSDT": ["bitcoin", "btc"],
+        "ETHUSDT": ["ethereum", "eth"],
+        "SOLUSDT": ["solana", "sol"],
     }
 
     def __init__(self) -> None:
-        self.vader  = SentimentIntensityAnalyzer()
-        self.reddit = None
-        self._init_reddit()
-
-    def _init_reddit(self) -> None:
-        client_id     = os.getenv("REDDIT_CLIENT_ID",     "")
-        client_secret = os.getenv("REDDIT_CLIENT_SECRET", "")
-        username      = os.getenv("REDDIT_USERNAME",      "")
-        password      = os.getenv("REDDIT_PASSWORD",      "")
-        user_agent    = os.getenv("REDDIT_USER_AGENT",    "hybrid-trading-pipeline/1.0")
-
-        if not all([client_id, client_secret, username, password]):
-            log.info("reddit_credentials_missing_graceful_fallback")
-            return
-
-        try:
-            import praw  # lazy import — praw is optional at module level
-            self.reddit = praw.Reddit(
-                client_id=client_id,
-                client_secret=client_secret,
-                username=username,
-                password=password,
-                user_agent=user_agent,
-            )
-        except Exception as exc:
-            log.warning("reddit_init_failed", error=str(exc))
+        self.vader = SentimentIntensityAnalyzer()
 
     # ------------------------------------------------------------------
-    # Post fetching
+    # Article fetching
     # ------------------------------------------------------------------
 
-    def fetch_posts(self, symbol: str, limit: int = 50) -> list[dict[str, Any]]:
-        """Fetch and filter Reddit posts for *symbol*.  Empty list if unavailable."""
-        if self.reddit is None:
-            return []
+    def fetch_articles(
+        self,
+        symbol: str,
+        max_age_hours: int = 24,
+    ) -> list[dict[str, Any]]:
+        """Fetch + filter articles from all RSS feeds.
 
-        keywords = self.SYMBOL_KEYWORDS.get(symbol, [symbol.lower().replace("USDT", "")])
-        posts: list[dict] = []
+        Filters by:
+        - Publish time within the last *max_age_hours* (when available)
+        - Title or summary containing one of the symbol's keywords (case-insensitive)
+        """
+        keywords = self.SYMBOL_KEYWORDS.get(
+            symbol, [symbol.lower().replace("USDT", "")]
+        )
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+        articles: list[dict[str, Any]] = []
 
-        for sub_name in self.SUBREDDITS:
+        for feed_url in self._all_feeds():
             try:
-                subreddit = self.reddit.subreddit(sub_name)
-                for submission in subreddit.hot(limit=limit):
-                    body = (submission.title + " " + (submission.selftext or "")).lower()
-                    if any(kw in body for kw in keywords):
-                        posts.append({
-                            "title":       submission.title,
-                            "selftext":    submission.selftext or "",
-                            "score":       max(submission.score, 1),  # floor at 1
-                            "created_utc": submission.created_utc,
-                        })
+                parsed = feedparser.parse(feed_url)
             except Exception as exc:
-                log.warning("reddit_fetch_failed", subreddit=sub_name, error=str(exc))
+                log.warning("rss_fetch_failed", url=feed_url, error=str(exc))
+                continue
 
-        return posts
+            for entry in getattr(parsed, "entries", []):
+                # Skip articles older than the cutoff when we have a timestamp
+                published_struct = getattr(entry, "published_parsed", None)
+                if published_struct:
+                    try:
+                        published_dt = datetime.fromtimestamp(
+                            mktime(published_struct), tz=timezone.utc
+                        )
+                        if published_dt < cutoff:
+                            continue
+                    except (TypeError, ValueError):
+                        pass  # bad timestamp — keep the article
+
+                title   = (entry.get("title")   or "").lower()
+                summary = (entry.get("summary") or "").lower()
+                if any(kw in title or kw in summary for kw in keywords):
+                    articles.append({
+                        "title":     entry.get("title", ""),
+                        "summary":   entry.get("summary", ""),
+                        "published": entry.get("published", ""),
+                    })
+
+        return articles
+
+    def _all_feeds(self) -> list[str]:
+        return [url for urls in self.RSS_FEEDS.values() for url in urls]
 
     # ------------------------------------------------------------------
     # Scoring
     # ------------------------------------------------------------------
 
-    def score_posts(self, posts: list[dict[str, Any]]) -> float:
-        """Return VADER-weighted compound score in [-1, 1].  0.0 if empty."""
-        if not posts:
+    def score_articles(self, articles: list[dict[str, Any]]) -> float:
+        """Simple-average VADER compound score across articles.  0.0 if empty."""
+        if not articles:
             return 0.0
 
-        total_upvotes = sum(p["score"] for p in posts)
-        if total_upvotes == 0:
-            return 0.0
-
-        weighted_sum = sum(
-            self.vader.polarity_scores(p["title"] + " " + p["selftext"])["compound"]
-            * p["score"]
-            for p in posts
-        )
-        return weighted_sum / total_upvotes
+        scores = [
+            self.vader.polarity_scores(
+                (a.get("title", "") + " " + a.get("summary", "")).strip()
+            )["compound"]
+            for a in articles
+        ]
+        return sum(scores) / len(scores)
 
     # ------------------------------------------------------------------
     # Signal
     # ------------------------------------------------------------------
 
     def generate_signal(self, symbol: str) -> Signal:
-        now      = datetime.now(timezone.utc)
-        posts    = self.fetch_posts(symbol)
-        sentiment = self.score_posts(posts)
+        now       = datetime.now(timezone.utc)
+        articles  = self.fetch_articles(symbol)
+        sentiment = self.score_articles(articles)
 
         if sentiment > 0.2:
             direction  = SignalDirection.BUY
@@ -129,8 +136,8 @@ class SentimentSignalGenerator:
             direction=direction, confidence=confidence,
             source="sentiment", symbol=symbol, timestamp=now,
             metadata={
-                "sentiment_score":    sentiment,
-                "post_count":         len(posts),
-                "subreddits_checked": self.SUBREDDITS,
+                "sentiment_score": sentiment,
+                "article_count":   len(articles),
+                "feeds_checked":   self._all_feeds(),
             },
         )

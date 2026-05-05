@@ -175,7 +175,7 @@ class MLSignalGenerator:
                 metadata={"reason": "no_features_available"},
             )
 
-        feat_values = [float(row[f]) for f in self.FEATURES]
+        feat_values = [float(row._mapping[f]) for f in self.FEATURES]
         X = self.scaler.transform([feat_values])
         prob_up = float(self.model.predict_proba(X)[0][1])
 

@@ -28,11 +28,6 @@ def _test_env(monkeypatch):
     monkeypatch.setenv("POSTGRES_PASSWORD", "test_pass")
     monkeypatch.setenv("POSTGRES_DB", "test_db")
     monkeypatch.setenv("TRADING_SYMBOLS", "BTCUSDT,ETHUSDT,SOLUSDT")
-    # Absent Reddit credentials → graceful degradation in SentimentSignalGenerator
-    monkeypatch.delenv("REDDIT_CLIENT_ID",     raising=False)
-    monkeypatch.delenv("REDDIT_CLIENT_SECRET", raising=False)
-    monkeypatch.delenv("REDDIT_USERNAME",      raising=False)
-    monkeypatch.delenv("REDDIT_PASSWORD",      raising=False)
 
 
 def _features(**overrides) -> dict:
@@ -148,30 +143,35 @@ class TestMLSignal:
 
 class TestSentimentSignal:
 
-    def test_sentiment_no_credentials(self):
-        """Missing Reddit creds → reddit=None → HOLD, confidence 0.4."""
+    @patch("signals.sentiment.feedparser.parse")
+    def test_sentiment_empty_feeds(self, mock_parse):
+        """Empty RSS feeds (no articles) → HOLD with confidence 0.4."""
         from signals.sentiment import SentimentSignalGenerator
 
-        gen = SentimentSignalGenerator()
+        empty_feed = MagicMock()
+        empty_feed.entries = []
+        mock_parse.return_value = empty_feed
 
-        assert gen.reddit is None
-
-        signal = gen.generate_signal("BTCUSDT")
+        signal = SentimentSignalGenerator().generate_signal("BTCUSDT")
 
         assert signal.direction  == SignalDirection.HOLD
         assert signal.confidence == pytest.approx(0.4)
         assert signal.source     == "sentiment"
 
-    def test_empty_posts_returns_neutral_score(self):
+    def test_empty_articles_returns_neutral_score(self):
         from signals.sentiment import SentimentSignalGenerator
 
-        assert SentimentSignalGenerator().score_posts([]) == pytest.approx(0.0)
+        assert SentimentSignalGenerator().score_articles([]) == pytest.approx(0.0)
 
-    def test_vader_scores_positive_text(self):
+    def test_vader_scores_positive_article(self):
         from signals.sentiment import SentimentSignalGenerator
 
-        posts = [{"title": "Bitcoin is incredible and amazing!", "selftext": "", "score": 100}]
-        score = SentimentSignalGenerator().score_posts(posts)
+        articles = [{
+            "title":     "Bitcoin is incredible and amazing!",
+            "summary":   "",
+            "published": "",
+        }]
+        score = SentimentSignalGenerator().score_articles(articles)
         assert score > 0.2, f"Expected positive score, got {score}"
 
 

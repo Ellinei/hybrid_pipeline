@@ -96,7 +96,7 @@ class SignalAggregator:
                 prob = m.get("probability_up")
                 hint = f"prob_up={prob:.2f}" if prob is not None else "no_model"
             else:  # sentiment
-                hint = f"score={m.get('sentiment_score', 0.0):.2f} posts={m.get('post_count', 0)}"
+                hint = f"score={m.get('sentiment_score', 0.0):.2f} articles={m.get('article_count', 0)}"
             parts.append(f"{name}: {s.direction.value}({s.confidence:.2f}) {hint}".strip())
 
         reasoning = (
