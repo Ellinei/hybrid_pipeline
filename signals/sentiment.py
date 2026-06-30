@@ -117,7 +117,10 @@ class SentimentSignalGenerator:
     # Signal
     # ------------------------------------------------------------------
 
-    def generate_signal(self, symbol: str) -> Signal:
+    def generate_signal(self, symbol: str, as_of: datetime | None = None) -> Signal:
+        """as_of is accepted for interface parity with the other generators
+        but ignored — live RSS has no historical archive to query, so this
+        always scores current articles regardless of as_of."""
         now       = datetime.now(timezone.utc)
         articles  = self.fetch_articles(symbol)
         sentiment = self.score_articles(articles)
@@ -140,4 +143,22 @@ class SentimentSignalGenerator:
                 "article_count":   len(articles),
                 "feeds_checked":   self._all_feeds(),
             },
+        )
+
+
+class NeutralSentimentSignalGenerator:
+    """No-op stand-in for backtesting.
+
+    Live sentiment has no historical archive (RSS is fetch-on-read only),
+    so a backtest can't replay it. This always returns a neutral HOLD with
+    no I/O — equivalent to "sentiment abstains" in the weighted aggregation,
+    since SignalDirection.HOLD always contributes a score of 0.
+    """
+
+    def generate_signal(self, symbol: str, as_of: datetime | None = None) -> Signal:
+        now = as_of if as_of is not None else datetime.now(timezone.utc)
+        return Signal(
+            direction=SignalDirection.HOLD, confidence=0.5,
+            source="sentiment", symbol=symbol, timestamp=now,
+            metadata={"reason": "no_historical_sentiment_data"},
         )

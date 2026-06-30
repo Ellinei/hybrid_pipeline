@@ -7,6 +7,7 @@ with base as (
         close,
         volume,
         lag(close,   1) over (partition by symbol order by timestamp) as close_prev_1,
+        lag(close,   4) over (partition by symbol order by timestamp) as close_prev_4,
         lag(close,  24) over (partition by symbol order by timestamp) as close_prev_24,
         lag(close, 168) over (partition by symbol order by timestamp) as close_prev_168
     from {{ ref('stg_ohlcv') }}
@@ -20,5 +21,6 @@ select
     case when close_prev_24  > 0 then ln(close / close_prev_24)  end as log_return_24h,
     case when close_prev_168 > 0 then ln(close / close_prev_168) end as log_return_7d,
     case when close_prev_1   > 0 then (close - close_prev_1)   / close_prev_1   * 100 end as pct_change_1h,
+    case when close_prev_4   > 0 then (close - close_prev_4)   / close_prev_4   * 100 end as pct_change_4h,
     case when close_prev_24  > 0 then (close - close_prev_24)  / close_prev_24  * 100 end as pct_change_24h
 from base

@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 import pandas as pd
 import structlog
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
+from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sqlalchemy import text
 from xgboost import XGBClassifier
@@ -32,9 +34,20 @@ class MLSignalGenerator:
     SCALER_PATH = "models/scaler.pkl"
 
     FEATURES = [
+        # Original momentum/volatility features
         "rsi_14_proxy", "macd_line", "bb_zscore",
         "pct_change_1h", "pct_change_24h", "log_return_1h",
         "range_14", "volume",
+        # Extended: multi-horizon returns
+        "log_return_7d", "pct_change_4h",
+        # Extended: trend position
+        "close_vs_sma20", "close_vs_sma50",
+        # Extended: volatility
+        "bb_width", "atr_normalized",
+        # Extended: volume conviction
+        "vol_ma_ratio",
+        # Extended: candle structure
+        "candle_body_pct", "upper_wick_pct", "stoch_k",
     ]
 
     def __init__(self, db_engine) -> None:
@@ -53,6 +66,11 @@ class MLSignalGenerator:
                 rsi_14_proxy, macd_line, bb_zscore,
                 pct_change_1h, pct_change_24h, log_return_1h,
                 range_14, volume,
+                log_return_7d, pct_change_4h,
+                close_vs_sma20, close_vs_sma50,
+                bb_width, atr_normalized,
+                vol_ma_ratio,
+                candle_body_pct, upper_wick_pct, stoch_k,
                 close,
                 LEAD(close, 1) OVER (PARTITION BY symbol ORDER BY timestamp) AS next_close
             FROM features.feat_technical
@@ -87,23 +105,37 @@ class MLSignalGenerator:
         X = full[self.FEATURES].values
         y = full["target"].values
 
-        # Time-based split — no shuffle (preserve temporal order)
+        # Outer 80/20 holdout — temporal order preserved, no shuffle
         split = int(len(X) * 0.8)
         X_tr, X_te = X[:split], X[split:]
         y_tr, y_te = y[:split], y[split:]
 
-        self.scaler = StandardScaler()
-        X_tr_s = self.scaler.fit_transform(X_tr)
-        X_te_s  = self.scaler.transform(X_te)
-
-        self.model = XGBClassifier(
-            n_estimators=100,
-            max_depth=4,
-            learning_rate=0.1,
-            eval_metric="logloss",
-            random_state=42,
+        # Pipeline ensures StandardScaler is fit only on each CV training fold,
+        # preventing scale leakage into validation folds.
+        pipe = Pipeline([
+            ("scaler", StandardScaler()),
+            ("clf", XGBClassifier(eval_metric="logloss", random_state=42)),
+        ])
+        param_grid = {
+            "clf__max_depth":     [3, 4, 5],
+            "clf__n_estimators":  [100, 200],
+            "clf__learning_rate": [0.05, 0.1],
+        }
+        # 12 combos × 5 folds = 60 fits; typically finishes in < 2 minutes.
+        grid = GridSearchCV(
+            pipe, param_grid,
+            cv=TimeSeriesSplit(n_splits=5),
+            scoring="accuracy",
+            refit=True,
+            n_jobs=-1,
         )
-        self.model.fit(X_tr_s, y_tr)
+        grid.fit(X_tr, y_tr)
+
+        # Extract fitted scaler and classifier from the winning pipeline.
+        # Preserves the existing two-file pickle format and inference path.
+        self.scaler = grid.best_estimator_.named_steps["scaler"]
+        self.model  = grid.best_estimator_.named_steps["clf"]
+        X_te_s = self.scaler.transform(X_te)
 
         y_pred = self.model.predict(X_te_s)
         metrics = {
@@ -113,6 +145,7 @@ class MLSignalGenerator:
             "f1":        float(f1_score(y_te, y_pred, zero_division=0)),
             "train_size": int(len(X_tr)),
             "test_size":  int(len(X_te)),
+            "best_params": grid.best_params_,
             "feature_importance": dict(
                 zip(self.FEATURES, self.model.feature_importances_.tolist())
             ),
@@ -139,43 +172,77 @@ class MLSignalGenerator:
         if not self.is_trained():
             return False
         try:
-            with open(self.MODEL_PATH,  "rb") as f: self.model  = pickle.load(f)
-            with open(self.SCALER_PATH, "rb") as f: self.scaler = pickle.load(f)
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore")   # suppress xgboost/sklearn pickle version noise
+                with open(self.MODEL_PATH,  "rb") as f: self.model  = pickle.load(f)
+                with open(self.SCALER_PATH, "rb") as f: self.scaler = pickle.load(f)
             return True
         except Exception as exc:
             log.warning("model_load_failed", error=str(exc))
             return False
 
-    def generate_signal(self, symbol: str) -> Signal:
-        now = datetime.now(timezone.utc)
+    def get_latest_features(
+        self, symbol: str, as_of: datetime | None = None
+    ) -> dict | None:
+        """Return the most recent feature row for *symbol*, or None.
 
-        if not self.load_model():
+        When *as_of* is given, returns the most recent row at or before that
+        timestamp instead of the live latest row — used by the backtester to
+        replay signals without leaking future data.
+        """
+        params: dict = {"symbol": symbol}
+        cutoff_clause = ""
+        if as_of is not None:
+            params["as_of"] = as_of
+            cutoff_clause = "AND timestamp <= :as_of"
+
+        query = text(f"""
+            SELECT rsi_14_proxy, macd_line, bb_zscore,
+                   pct_change_1h, pct_change_24h, log_return_1h,
+                   range_14, volume,
+                   log_return_7d, pct_change_4h,
+                   close_vs_sma20, close_vs_sma50,
+                   bb_width, atr_normalized,
+                   vol_ma_ratio,
+                   candle_body_pct, upper_wick_pct, stoch_k
+            FROM features.feat_technical
+            WHERE symbol = :symbol
+            {cutoff_clause}
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """)
+        with self.engine.connect() as conn:
+            row = conn.execute(query, params).fetchone()
+        return dict(row._mapping) if row else None
+
+    def generate_signal(self, symbol: str, as_of: datetime | None = None) -> Signal:
+        now = as_of if as_of is not None else datetime.now(timezone.utc)
+
+        if self.model is None and not self.load_model():
             return Signal(
                 direction=SignalDirection.HOLD, confidence=0.5,
                 source="ml", symbol=symbol, timestamp=now,
                 metadata={"reason": "model_not_trained"},
             )
 
-        query = text("""
-            SELECT rsi_14_proxy, macd_line, bb_zscore,
-                   pct_change_1h, pct_change_24h, log_return_1h,
-                   range_14, volume
-            FROM features.feat_technical
-            WHERE symbol = :symbol
-            ORDER BY timestamp DESC
-            LIMIT 1
-        """)
-        with self.engine.connect() as conn:
-            row = conn.execute(query, {"symbol": symbol}).fetchone()
+        features = self.get_latest_features(symbol, as_of=as_of)
 
-        if row is None:
+        if features is None:
             return Signal(
                 direction=SignalDirection.HOLD, confidence=0.5,
                 source="ml", symbol=symbol, timestamp=now,
                 metadata={"reason": "no_features_available"},
             )
 
-        feat_values = [float(row._mapping[f]) for f in self.FEATURES]
+        if any(features.get(f) is None for f in self.FEATURES):
+            return Signal(
+                direction=SignalDirection.HOLD, confidence=0.5,
+                source="ml", symbol=symbol, timestamp=now,
+                metadata={"reason": "null_features"},
+            )
+
+        feat_values = [float(features[f]) for f in self.FEATURES]
         X = self.scaler.transform([feat_values])
         prob_up = float(self.model.predict_proba(X)[0][1])
 

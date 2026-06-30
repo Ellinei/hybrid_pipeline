@@ -184,7 +184,12 @@ def run_backfill(
             host=os.getenv("POSTGRES_HOST", "localhost"),
             port=os.getenv("POSTGRES_PORT", "5432"),
             db=os.getenv("POSTGRES_DB", "trading"),
-        )
+        ),
+        # future=True is a no-op under SQLAlchemy 2.0 (the main project env)
+        # but switches SQLAlchemy 1.4 (pinned inside the Airflow image,
+        # which can't take 2.0) into the 2.0-style Connection API that
+        # create_all_tables relies on (conn.commit()).
+        future=True,
     )
     try:
         create_all_tables(engine)

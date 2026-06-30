@@ -6,11 +6,12 @@ TimescaleDB hypertable and the DESC index — both are idempotent.
 from __future__ import annotations
 
 from sqlalchemy import BOOLEAN, INTEGER, NUMERIC, TIMESTAMP, VARCHAR, Column, text
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.orm import declarative_base
 
-
-class Base(DeclarativeBase):
-    pass
+# declarative_base() (not the 2.0-only DeclarativeBase class) — the Airflow
+# image pins SQLAlchemy <2.0 (apache/airflow:2.8.1), while the main project
+# env uses 2.0+; this API works unchanged on both.
+Base = declarative_base()
 
 
 class OHLCV(Base):

@@ -73,6 +73,7 @@ class BinanceClientWrapper:
         self.symbols = [s.strip() for s in symbols_raw.split(",") if s.strip()]
         self.client = Client(api_key, api_secret, testnet=testnet)
         self._log = structlog.get_logger().bind(testnet=testnet)
+        self._symbol_info_cache: dict[str, dict] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -125,6 +126,31 @@ class BinanceClientWrapper:
         """Return the latest mark price for a symbol."""
         ticker = self.client.get_symbol_ticker(symbol=symbol)
         return float(ticker["price"])
+
+    def get_account_balance(self, asset: str = "USDT") -> float:
+        """Return the free balance for *asset* from the testnet account.
+
+        Raises on failure — callers that size trades off this number must
+        not proceed with a guessed balance.
+        """
+        balance = self.client.get_asset_balance(asset=asset)
+        if not balance:
+            raise ValueError(f"no balance entry returned for asset {asset!r}")
+        return float(balance["free"])
+
+    def get_symbol_info_cached(self, symbol: str) -> dict:
+        """Fetch and cache get_symbol_info(symbol) for the process lifetime.
+
+        Exchange filters (stepSize, tickSize, minNotional) change rarely; one
+        fetch per symbol per process avoids hammering /api/v3/exchangeInfo on
+        every trade.
+        """
+        if symbol not in self._symbol_info_cache:
+            info = self.client.get_symbol_info(symbol)
+            if info is None:
+                raise ValueError(f"get_symbol_info returned None for {symbol!r}")
+            self._symbol_info_cache[symbol] = info
+        return self._symbol_info_cache[symbol]
 
     def ping(self) -> bool:
         """Return True if the Binance server is reachable, False otherwise."""

@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 from signals.base import AggregatedSignal, Signal, SignalDirection
 from signals.ml_model import MLSignalGenerator
-from signals.sentiment import SentimentSignalGenerator
+from signals.sentiment import NeutralSentimentSignalGenerator, SentimentSignalGenerator
 from signals.technical import TechnicalSignalGenerator
 
 log = structlog.get_logger()
@@ -45,22 +45,31 @@ class SignalAggregator:
         self.technical = TechnicalSignalGenerator(db_engine)
         self.ml        = MLSignalGenerator(db_engine)
         self.sentiment = SentimentSignalGenerator()
+        self._neutral_sentiment = NeutralSentimentSignalGenerator()
 
     # ------------------------------------------------------------------
     # Core fusion
     # ------------------------------------------------------------------
 
-    def aggregate(self, symbol: str) -> AggregatedSignal:
-        now     = datetime.now(timezone.utc)
+    def aggregate(self, symbol: str, as_of: datetime | None = None) -> AggregatedSignal:
+        now     = as_of if as_of is not None else datetime.now(timezone.utc)
         signals: list[Signal] = []
+
+        # Live sentiment has no historical archive — when replaying a past
+        # bar (as_of set), swap in the no-op neutral generator instead of
+        # hitting live RSS feeds for "current" sentiment.
+        sentiment_gen = self._neutral_sentiment if as_of is not None else self.sentiment
 
         for name, gen in (
             ("technical", self.technical),
             ("ml",        self.ml),
-            ("sentiment", self.sentiment),
+            ("sentiment", sentiment_gen),
         ):
             try:
-                signals.append(gen.generate_signal(symbol))
+                if as_of is not None:
+                    signals.append(gen.generate_signal(symbol, as_of=as_of))
+                else:
+                    signals.append(gen.generate_signal(symbol))
             except Exception:
                 log.exception("signal_generation_failed", source=name, symbol=symbol)
                 signals.append(Signal(

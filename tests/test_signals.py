@@ -31,8 +31,9 @@ def _test_env(monkeypatch):
 
 
 def _features(**overrides) -> dict:
-    """Build a minimal features dict with sensible defaults."""
+    """Build a minimal features dict with sensible defaults (all 18 ML features)."""
     base = {
+        # Original 8
         "rsi_14_proxy":  50.0,
         "macd_line":      0.0,
         "bb_zscore":      0.0,
@@ -41,6 +42,17 @@ def _features(**overrides) -> dict:
         "log_return_1h":  0.001,
         "range_14":    1000.0,
         "volume":       100.0,
+        # Extended 10
+        "log_return_7d":   0.01,
+        "pct_change_4h":   0.0,
+        "close_vs_sma20":  0.0,
+        "close_vs_sma50":  0.0,
+        "bb_width":        2.0,
+        "atr_normalized":  1.5,
+        "vol_ma_ratio":    1.0,
+        "candle_body_pct": 0.3,
+        "upper_wick_pct":  0.1,
+        "stoch_k":        50.0,
     }
     base.update(overrides)
     return base
@@ -120,6 +132,53 @@ class TestTechnicalSignals:
 
 
 # ===========================================================================
+# 3b. Technical signal — as_of historical cutoff (for backtesting)
+# ===========================================================================
+
+class TestTechnicalAsOf:
+    def test_as_of_none_queries_latest_row_unchanged(self):
+        from signals.technical import TechnicalSignalGenerator
+
+        engine = MagicMock()
+        conn = MagicMock()
+        engine.connect.return_value.__enter__.return_value = conn
+        conn.execute.return_value.fetchone.return_value = None
+
+        TechnicalSignalGenerator(engine).get_latest_features("BTCUSDT")
+
+        sql, params = conn.execute.call_args[0]
+        assert "as_of" not in params
+        assert "<= :as_of" not in str(sql)
+
+    def test_as_of_set_adds_timestamp_cutoff_to_query(self):
+        from signals.technical import TechnicalSignalGenerator
+
+        engine = MagicMock()
+        conn = MagicMock()
+        engine.connect.return_value.__enter__.return_value = conn
+        conn.execute.return_value.fetchone.return_value = None
+        cutoff = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+        TechnicalSignalGenerator(engine).get_latest_features("BTCUSDT", as_of=cutoff)
+
+        sql, params = conn.execute.call_args[0]
+        assert params["as_of"] == cutoff
+        assert "<= :as_of" in str(sql)
+
+    @patch("signals.technical.TechnicalSignalGenerator.get_latest_features")
+    def test_generate_signal_passes_as_of_through_and_uses_it_as_timestamp(self, mock_feat):
+        from signals.technical import TechnicalSignalGenerator
+
+        mock_feat.return_value = _features()
+        cutoff = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+        signal = TechnicalSignalGenerator(MagicMock()).generate_signal("BTCUSDT", as_of=cutoff)
+
+        mock_feat.assert_called_once_with("BTCUSDT", as_of=cutoff)
+        assert signal.timestamp == cutoff
+
+
+# ===========================================================================
 # 4.  ML signal — no model file on disk
 # ===========================================================================
 
@@ -135,6 +194,50 @@ class TestMLSignal:
         assert signal.direction  == SignalDirection.HOLD
         assert signal.confidence == pytest.approx(0.5)
         assert signal.source     == "ml"
+
+
+# ===========================================================================
+# 4b. ML signal — as_of historical cutoff (for backtesting)
+# ===========================================================================
+
+class TestMLAsOf:
+    def test_as_of_none_queries_latest_row_unchanged(self):
+        from signals.ml_model import MLSignalGenerator
+
+        engine = MagicMock()
+        conn = MagicMock()
+        engine.connect.return_value.__enter__.return_value = conn
+        conn.execute.return_value.fetchone.return_value = None
+
+        MLSignalGenerator(engine).get_latest_features("BTCUSDT")
+
+        sql, params = conn.execute.call_args[0]
+        assert "as_of" not in params
+        assert "<= :as_of" not in str(sql)
+
+    def test_as_of_set_adds_timestamp_cutoff_to_query(self):
+        from signals.ml_model import MLSignalGenerator
+
+        engine = MagicMock()
+        conn = MagicMock()
+        engine.connect.return_value.__enter__.return_value = conn
+        conn.execute.return_value.fetchone.return_value = None
+        cutoff = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+        MLSignalGenerator(engine).get_latest_features("BTCUSDT", as_of=cutoff)
+
+        sql, params = conn.execute.call_args[0]
+        assert params["as_of"] == cutoff
+        assert "<= :as_of" in str(sql)
+
+    @patch("signals.ml_model.MLSignalGenerator.is_trained", return_value=False)
+    def test_generate_signal_passes_as_of_through_as_timestamp_even_without_model(self, _):
+        from signals.ml_model import MLSignalGenerator
+
+        cutoff = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        signal = MLSignalGenerator(MagicMock()).generate_signal("BTCUSDT", as_of=cutoff)
+
+        assert signal.timestamp == cutoff
 
 
 # ===========================================================================
@@ -158,6 +261,19 @@ class TestSentimentSignal:
         assert signal.confidence == pytest.approx(0.4)
         assert signal.source     == "sentiment"
 
+    def test_generate_signal_accepts_as_of_without_error(self, ):
+        """Live sentiment has no historical archive — as_of is accepted but
+        ignored (always scores current live articles)."""
+        from signals.sentiment import SentimentSignalGenerator
+
+        cutoff = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with patch("signals.sentiment.feedparser.parse") as mock_parse:
+            empty_feed = MagicMock()
+            empty_feed.entries = []
+            mock_parse.return_value = empty_feed
+            signal = SentimentSignalGenerator().generate_signal("BTCUSDT", as_of=cutoff)
+        assert signal.direction == SignalDirection.HOLD
+
     def test_empty_articles_returns_neutral_score(self):
         from signals.sentiment import SentimentSignalGenerator
 
@@ -173,6 +289,24 @@ class TestSentimentSignal:
         }]
         score = SentimentSignalGenerator().score_articles(articles)
         assert score > 0.2, f"Expected positive score, got {score}"
+
+
+# ===========================================================================
+# 5b. NeutralSentimentSignalGenerator — no-op stand-in for backtesting
+# ===========================================================================
+
+class TestNeutralSentimentSignalGenerator:
+    def test_returns_hold_with_no_io(self):
+        """No feedparser/network call — used when sentiment has no history."""
+        from signals.sentiment import NeutralSentimentSignalGenerator
+
+        cutoff = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        signal = NeutralSentimentSignalGenerator().generate_signal("BTCUSDT", as_of=cutoff)
+
+        assert signal.direction == SignalDirection.HOLD
+        assert signal.confidence == pytest.approx(0.5)
+        assert signal.source == "sentiment"
+        assert signal.timestamp == cutoff
 
 
 # ===========================================================================
@@ -236,6 +370,54 @@ class TestSignalAggregator:
         # technical falls back to HOLD → ml+sentiment still push BUY
         # 0*0.4 + 0.8*0.4 + 0.6*0.2 = 0.32 + 0.12 = 0.44 > 0.15 → BUY
         assert result.direction == SignalDirection.BUY
+
+
+# ===========================================================================
+# 7b. Aggregator — as_of threading + neutral sentiment swap-in
+# ===========================================================================
+
+class TestAggregatorAsOf:
+    def test_as_of_none_calls_generators_without_as_of_kwarg(self):
+        agg = self._agg_for_as_of()
+        agg.aggregate("BTCUSDT")
+
+        _, kwargs = agg.technical.generate_signal.call_args
+        assert "as_of" not in kwargs
+        _, kwargs = agg.ml.generate_signal.call_args
+        assert "as_of" not in kwargs
+        # Live mode (as_of=None) uses the real/live sentiment generator.
+        agg.sentiment.generate_signal.assert_called_once_with("BTCUSDT")
+
+    def test_as_of_set_passes_to_technical_and_ml_and_uses_neutral_sentiment(self):
+        agg = self._agg_for_as_of()
+        cutoff = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+        result = agg.aggregate("BTCUSDT", as_of=cutoff)
+
+        _, kwargs = agg.technical.generate_signal.call_args
+        assert kwargs["as_of"] == cutoff
+        _, kwargs = agg.ml.generate_signal.call_args
+        assert kwargs["as_of"] == cutoff
+        # the mocked live sentiment generator must never be called when as_of is set
+        agg.sentiment.generate_signal.assert_not_called()
+        sentiment_sub_signal = next(s for s in result.signals if s.source == "sentiment")
+        assert sentiment_sub_signal.direction == SignalDirection.HOLD
+        assert result.timestamp == cutoff
+
+    def _agg_for_as_of(self):
+        from signals.aggregator import SignalAggregator
+        from signals.sentiment import NeutralSentimentSignalGenerator
+
+        agg = SignalAggregator.__new__(SignalAggregator)
+        agg.weights   = {"technical": 0.40, "ml": 0.40, "sentiment": 0.20}
+        agg.technical = MagicMock()
+        agg.ml        = MagicMock()
+        agg.sentiment = MagicMock()
+        agg._neutral_sentiment = NeutralSentimentSignalGenerator()
+        agg.technical.generate_signal.return_value = _signal(SignalDirection.BUY, 0.8, "technical")
+        agg.ml.generate_signal.return_value        = _signal(SignalDirection.BUY, 0.8, "ml")
+        agg.sentiment.generate_signal.return_value = _signal(SignalDirection.HOLD, 0.4, "sentiment")
+        return agg
 
 
 # ===========================================================================

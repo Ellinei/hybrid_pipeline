@@ -75,6 +75,69 @@ class TestBinanceClientPing:
 
 
 # ===========================================================================
+# 1b. BinanceClientWrapper.get_account_balance — must never fabricate a value
+# ===========================================================================
+
+class TestGetAccountBalance:
+    @patch("ingestion.binance_client.Client")
+    def test_returns_free_balance_on_success(self, MockClient):
+        MockClient.return_value.get_asset_balance.return_value = {"free": "123.45"}
+
+        from ingestion.binance_client import BinanceClientWrapper
+        assert BinanceClientWrapper().get_account_balance("USDT") == 123.45
+
+    @patch("ingestion.binance_client.Client")
+    def test_raises_when_api_call_fails(self, MockClient):
+        MockClient.return_value.get_asset_balance.side_effect = Exception("timeout")
+
+        from ingestion.binance_client import BinanceClientWrapper
+        with pytest.raises(Exception):
+            BinanceClientWrapper().get_account_balance("USDT")
+
+    @patch("ingestion.binance_client.Client")
+    def test_raises_when_no_balance_entry_returned(self, MockClient):
+        MockClient.return_value.get_asset_balance.return_value = None
+
+        from ingestion.binance_client import BinanceClientWrapper
+        with pytest.raises(ValueError):
+            BinanceClientWrapper().get_account_balance("USDT")
+
+
+# ===========================================================================
+# 1c. BinanceClientWrapper.get_symbol_info_cached — fetch once, cache after
+# ===========================================================================
+
+class TestGetSymbolInfoCached:
+    @patch("ingestion.binance_client.Client")
+    def test_returns_info_from_api(self, MockClient):
+        MockClient.return_value.get_symbol_info.return_value = {"symbol": "BTCUSDT", "filters": []}
+
+        from ingestion.binance_client import BinanceClientWrapper
+        wrapper = BinanceClientWrapper()
+        assert wrapper.get_symbol_info_cached("BTCUSDT") == {"symbol": "BTCUSDT", "filters": []}
+
+    @patch("ingestion.binance_client.Client")
+    def test_only_calls_api_once_per_symbol(self, MockClient):
+        MockClient.return_value.get_symbol_info.return_value = {"symbol": "BTCUSDT", "filters": []}
+
+        from ingestion.binance_client import BinanceClientWrapper
+        wrapper = BinanceClientWrapper()
+        wrapper.get_symbol_info_cached("BTCUSDT")
+        wrapper.get_symbol_info_cached("BTCUSDT")
+
+        assert MockClient.return_value.get_symbol_info.call_count == 1
+
+    @patch("ingestion.binance_client.Client")
+    def test_raises_when_api_returns_none(self, MockClient):
+        MockClient.return_value.get_symbol_info.return_value = None
+
+        from ingestion.binance_client import BinanceClientWrapper
+        wrapper = BinanceClientWrapper()
+        with pytest.raises(ValueError):
+            wrapper.get_symbol_info_cached("BTCUSDT")
+
+
+# ===========================================================================
 # 2. BinanceClientWrapper.fetch_ohlcv — DataFrame shape and dtypes
 # ===========================================================================
 

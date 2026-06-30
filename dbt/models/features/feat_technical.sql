@@ -1,13 +1,13 @@
 {{ config(materialized='table') }}
 
--- Join returns (log/pct changes) with the OHLCV data to access high + low for ATR.
--- We extract only high/low from stg_ohlcv to avoid column-name collisions on
--- close and volume, which both upstream models share.
+-- Join returns (log/pct changes) with the OHLCV data to access open/high/low for
+-- candle-structure features and ATR. We extract only open/high/low from stg_ohlcv
+-- to avoid column-name collisions on close and volume, which both upstream models share.
 with returns as (
     select * from {{ ref('int_returns') }}
 ),
-highs_lows as (
-    select symbol, timestamp, high, low
+prices as (
+    select symbol, timestamp, open, high, low
     from {{ ref('stg_ohlcv') }}
 ),
 joined as (
@@ -17,38 +17,50 @@ joined as (
         r.close,
         r.volume,
         r.log_return_1h,
+        r.log_return_7d,
         r.pct_change_1h,
+        r.pct_change_4h,
         r.pct_change_24h,
-        h.high,
-        h.low
+        p.open,
+        p.high,
+        p.low
     from returns r
-    join highs_lows h using (symbol, timestamp)
+    join prices p using (symbol, timestamp)
 ),
 windowed as (
     select
         symbol,
         timestamp,
         close,
+        open,
+        high,
+        low,
         volume,
         log_return_1h,
+        log_return_7d,
         pct_change_1h,
+        pct_change_4h,
         pct_change_24h,
         -- 14-period high/low for RSI proxy and ATR proxy
-        max(close) over w14  as max_close_14,
-        min(close) over w14  as min_close_14,
-        max(high)  over w14  as high_14,
-        min(low)   over w14  as low_14,
+        max(close) over w14    as max_close_14,
+        min(close) over w14    as min_close_14,
+        max(high)  over w14    as high_14,
+        min(low)   over w14    as low_14,
         -- Moving averages (SMA used as EMA proxy)
-        avg(close) over w12  as ema_12_proxy,
-        avg(close) over w26  as ema_26_proxy,
-        avg(close) over w20  as sma_20,
-        stddev(close) over w20 as stddev_20
+        avg(close) over w12    as ema_12_proxy,
+        avg(close) over w26    as ema_26_proxy,
+        avg(close) over w20    as sma_20,
+        avg(close) over w50    as sma_50,
+        stddev(close) over w20 as stddev_20,
+        -- Volume moving average for conviction signal
+        avg(volume) over w20   as vol_ma_20
     from joined
     window
         w12 as (partition by symbol order by timestamp rows between 11 preceding and current row),
         w14 as (partition by symbol order by timestamp rows between 13 preceding and current row),
         w20 as (partition by symbol order by timestamp rows between 19 preceding and current row),
-        w26 as (partition by symbol order by timestamp rows between 25 preceding and current row)
+        w26 as (partition by symbol order by timestamp rows between 25 preceding and current row),
+        w50 as (partition by symbol order by timestamp rows between 49 preceding and current row)
 )
 select
     symbol,
@@ -56,7 +68,9 @@ select
     close,
     volume,
     log_return_1h,
+    log_return_7d,
     pct_change_1h,
+    pct_change_4h,
     pct_change_24h,
     -- RSI proxy: position of close within the 14-period high/low range (0–100)
     case
@@ -75,7 +89,24 @@ select
         else 0.0
     end as bb_zscore,
     -- ATR proxy: 14-period high/low range
-    high_14 - low_14               as range_14,
-    current_timestamp              as computed_at
+    high_14 - low_14                                                   as range_14,
+    -- Volatility expansion: Bollinger Band width as % of SMA-20
+    case when sma_20 > 0 then 4 * stddev_20 / sma_20 * 100 end        as bb_width,
+    -- ATR normalized by price (% of close)
+    case when close > 0 then (high_14 - low_14) / close * 100 end     as atr_normalized,
+    -- Trend position relative to moving averages
+    case when sma_20 > 0 then (close - sma_20) / sma_20 * 100 end     as close_vs_sma20,
+    case when sma_50 > 0 then (close - sma_50) / sma_50 * 100 end     as close_vs_sma50,
+    -- Volume conviction: current volume vs 20-bar average
+    case when vol_ma_20 > 0 then volume / vol_ma_20 end                as vol_ma_ratio,
+    -- Candle body: fraction of candle range covered by the body (negative = bearish)
+    case when (high - low) > 0 then (close - open) / (high - low)
+         else 0.0
+    end                                                                as candle_body_pct,
+    -- Upper wick: upper shadow as fraction of total range (rejection signal)
+    (high - greatest(open, close)) / nullif(high - low, 0)            as upper_wick_pct,
+    -- Stochastic %K: where close sits in the 14-bar high/low range
+    100.0 * (close - low_14) / nullif(high_14 - low_14, 0)            as stoch_k,
+    current_timestamp                                                  as computed_at
 from windowed
 where log_return_1h is not null

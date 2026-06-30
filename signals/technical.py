@@ -25,30 +25,44 @@ class TechnicalSignalGenerator:
     # DB access
     # ------------------------------------------------------------------
 
-    def get_latest_features(self, symbol: str) -> dict | None:
-        """Return the most recent feature row for *symbol*, or None."""
-        query = text("""
+    def get_latest_features(
+        self, symbol: str, as_of: datetime | None = None
+    ) -> dict | None:
+        """Return the most recent feature row for *symbol*, or None.
+
+        When *as_of* is given, returns the most recent row at or before that
+        timestamp instead of the live latest row — used by the backtester to
+        replay signals without leaking future data.
+        """
+        params: dict = {"symbol": symbol}
+        cutoff_clause = ""
+        if as_of is not None:
+            params["as_of"] = as_of
+            cutoff_clause = "AND timestamp <= :as_of"
+
+        query = text(f"""
             SELECT
                 rsi_14_proxy, macd_line, bb_zscore,
                 pct_change_1h, pct_change_24h, log_return_1h,
                 range_14, volume
             FROM features.feat_technical
             WHERE symbol = :symbol
+            {cutoff_clause}
             ORDER BY timestamp DESC
             LIMIT 1
         """)
         with self.engine.connect() as conn:
-            row = conn.execute(query, {"symbol": symbol}).fetchone()
+            row = conn.execute(query, params).fetchone()
         return dict(row._mapping) if row else None
 
     # ------------------------------------------------------------------
     # Signal logic
     # ------------------------------------------------------------------
 
-    def generate_signal(self, symbol: str) -> Signal:
+    def generate_signal(self, symbol: str, as_of: datetime | None = None) -> Signal:
         """Apply rule set and return a Signal."""
-        now = datetime.now(timezone.utc)
-        features = self.get_latest_features(symbol)
+        now = as_of if as_of is not None else datetime.now(timezone.utc)
+        features = self.get_latest_features(symbol, as_of=as_of)
 
         if not features:
             return Signal(
