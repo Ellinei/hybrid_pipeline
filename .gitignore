@@ -47,3 +47,9 @@ airflow/plugins/
 dbt/target/
 dbt/logs/
 dbt/dbt_packages/
+
+# Claude Code local settings (personal paths and approved command patterns)
+.claude/settings.local.json
+
+# Generated backtest trade logs (analysis artifacts, not source)
+trades_*.csv
