@@ -103,7 +103,7 @@ class MLSignalGenerator:
 
         full = pd.concat(frames, ignore_index=True)
         X = full[self.FEATURES].values
-        y = full["target"].values
+        y = full["target"].to_numpy()
 
         # Outer 80/20 holdout — temporal order preserved, no shuffle
         split = int(len(X) * 0.8)
@@ -133,11 +133,13 @@ class MLSignalGenerator:
 
         # Extract fitted scaler and classifier from the winning pipeline.
         # Preserves the existing two-file pickle format and inference path.
-        self.scaler = grid.best_estimator_.named_steps["scaler"]
-        self.model  = grid.best_estimator_.named_steps["clf"]
-        X_te_s = self.scaler.transform(X_te)
+        scaler: StandardScaler = grid.best_estimator_.named_steps["scaler"]
+        model: XGBClassifier   = grid.best_estimator_.named_steps["clf"]
+        self.scaler = scaler
+        self.model  = model
+        X_te_s = scaler.transform(X_te)
 
-        y_pred = self.model.predict(X_te_s)
+        y_pred = model.predict(X_te_s)
         metrics = {
             "accuracy":  float(accuracy_score(y_te, y_pred)),
             "precision": float(precision_score(y_te, y_pred, zero_division=0)),
@@ -147,7 +149,7 @@ class MLSignalGenerator:
             "test_size":  int(len(X_te)),
             "best_params": grid.best_params_,
             "feature_importance": dict(
-                zip(self.FEATURES, self.model.feature_importances_.tolist())
+                zip(self.FEATURES, model.feature_importances_.tolist())
             ),
         }
 
@@ -243,6 +245,8 @@ class MLSignalGenerator:
             )
 
         feat_values = [float(features[f]) for f in self.FEATURES]
+        assert self.scaler is not None
+        assert self.model is not None
         X = self.scaler.transform([feat_values])
         prob_up = float(self.model.predict_proba(X)[0][1])
 
