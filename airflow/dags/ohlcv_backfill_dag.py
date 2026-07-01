@@ -24,8 +24,8 @@ def _run_backfill() -> None:
     # Override host/port for the docker-internal network — the env vars in
     # docker-compose point to postgres:5432, but explicitly set them here so
     # this function works even if someone calls it outside Airflow.
-    os.environ["POSTGRES_HOST"] = "postgres"
-    os.environ["POSTGRES_PORT"] = "5432"
+    os.environ.setdefault("POSTGRES_HOST", "postgres")
+    os.environ.setdefault("POSTGRES_PORT", "5432")
 
     from ingestion.rest_backfill import run_backfill
 

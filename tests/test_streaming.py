@@ -306,3 +306,56 @@ class TestBufferWindow:
             TickRecord(now - timedelta(seconds=10), price=102.0, quantity=1.0),
         ]
         assert len(filter_window(ticks, minutes=1, now=now)) == 3
+
+
+# ===========================================================================
+# 5. _process_message — malformed message handling
+# ===========================================================================
+
+class TestProcessMessageMalformed:
+    """Missing or bad fields in a trade message must log a warning and not crash."""
+
+    def _make_processor(self):
+        import structlog
+        from streaming.feature_processor import FeatureProcessor
+
+        proc = FeatureProcessor.__new__(FeatureProcessor)
+        proc._buffers = {}
+        proc._log = structlog.get_logger()
+        return proc
+
+    def test_missing_price_key_does_not_crash_consumer(self):
+        proc = self._make_processor()
+        msg = {
+            "stream_type": "trade",
+            "timestamp": "2021-01-01T00:00:00.000000Z",
+            # "price" intentionally absent
+            "quantity": "0.001",
+            "symbol": "BTCUSDT",
+        }
+        proc._process_message(msg)          # must not raise
+        assert "BTCUSDT" not in proc._buffers   # no tick was buffered
+
+    def test_missing_timestamp_key_does_not_crash_consumer(self):
+        proc = self._make_processor()
+        msg = {
+            "stream_type": "trade",
+            # "timestamp" intentionally absent
+            "price": "29000.5",
+            "quantity": "0.001",
+            "symbol": "BTCUSDT",
+        }
+        proc._process_message(msg)
+        assert "BTCUSDT" not in proc._buffers
+
+    def test_invalid_timestamp_format_does_not_crash_consumer(self):
+        proc = self._make_processor()
+        msg = {
+            "stream_type": "trade",
+            "timestamp": "not-a-date",
+            "price": "29000.5",
+            "quantity": "0.001",
+            "symbol": "BTCUSDT",
+        }
+        proc._process_message(msg)
+        assert "BTCUSDT" not in proc._buffers

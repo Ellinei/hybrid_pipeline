@@ -236,11 +236,10 @@ class FeatureProcessor:
             ts = datetime.fromisoformat(msg["timestamp"])
             if ts.tzinfo is None:
                 ts = ts.replace(tzinfo=timezone.utc)
+            tick = TickRecord(timestamp=ts, price=float(msg["price"]), quantity=float(msg["quantity"]))
         except (KeyError, ValueError):
-            self._log.warning("bad_timestamp", msg=msg)
+            self._log.warning("bad_message", msg=msg)
             return
-
-        tick = TickRecord(timestamp=ts, price=float(msg["price"]), quantity=float(msg["quantity"]))
 
         buf = self._buffers.setdefault(msg["symbol"], [])
         buf.append(tick)
@@ -256,6 +255,7 @@ class FeatureProcessor:
                     features = compute_features(symbol, buf, now=now)
                     if features["last_price"] is not None:
                         self._write_features(features)
+                    self._last_flush[symbol] = now
                 except psycopg2.Error:
                     # DB hiccup — roll back this txn and try again on next tick.
                     # If we don't roll back, the connection stays in a failed
@@ -265,7 +265,6 @@ class FeatureProcessor:
                         self._conn.rollback()
                     except psycopg2.Error:
                         self._log.exception("rollback_failed", symbol=symbol)
-                self._last_flush[symbol] = now
 
     def _write_features(self, f: dict[str, Any]) -> None:
         with self._conn.cursor() as cur:

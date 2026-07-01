@@ -110,3 +110,5 @@ select
     current_timestamp                                                  as computed_at
 from windowed
 where log_return_1h is not null
+  and upper_wick_pct is not null
+  and stoch_k is not null

@@ -12,5 +12,9 @@ select
     trades,
     taker_buy_vol::numeric(30,8)    as taker_buy_volume
 from {{ source('raw', 'ohlcv') }}
-where close > 0
+where open > 0
+  and high > 0
+  and low > 0
+  and close > 0
   and volume >= 0
+  and low <= high

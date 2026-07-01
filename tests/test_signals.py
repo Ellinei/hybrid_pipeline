@@ -130,6 +130,18 @@ class TestTechnicalSignals:
 
         assert signal.direction == SignalDirection.HOLD
 
+    @patch("signals.technical.TechnicalSignalGenerator.get_latest_features")
+    def test_rsi_zero_is_not_replaced_by_default_and_triggers_buy(self, mock_feat):
+        """RSI=0.0 is extreme oversold (valid value). Must not be replaced by 50.0
+        via a falsy `or` default — doing so would silently drop a strong BUY signal."""
+        from signals.technical import TechnicalSignalGenerator
+
+        mock_feat.return_value = _features(rsi_14_proxy=0.0, macd_line=0.1)
+        signal = TechnicalSignalGenerator(MagicMock()).generate_signal("BTCUSDT")
+
+        assert signal.direction  == SignalDirection.BUY
+        assert signal.confidence == pytest.approx(0.8)
+
 
 # ===========================================================================
 # 3b. Technical signal — as_of historical cutoff (for backtesting)

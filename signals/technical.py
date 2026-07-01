@@ -71,11 +71,11 @@ class TechnicalSignalGenerator:
                 metadata={},
             )
 
-        rsi    = features.get("rsi_14_proxy",  50.0) or 50.0
-        macd   = features.get("macd_line",      0.0) or 0.0
-        bz     = features.get("bb_zscore",      0.0) or 0.0
-        pct_1h = features.get("pct_change_1h",  0.0) or 0.0
-        pct_24 = features.get("pct_change_24h", 0.0) or 0.0
+        rsi    = v if (v := features.get("rsi_14_proxy"))  is not None else 50.0
+        macd   = v if (v := features.get("macd_line"))     is not None else 0.0
+        bz     = v if (v := features.get("bb_zscore"))     is not None else 0.0
+        pct_1h = v if (v := features.get("pct_change_1h")) is not None else 0.0
+        pct_24 = v if (v := features.get("pct_change_24h"))is not None else 0.0
 
         meta = {
             "rsi": rsi, "macd": macd, "bb_zscore": bz,

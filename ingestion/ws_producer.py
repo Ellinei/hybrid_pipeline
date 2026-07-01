@@ -232,7 +232,8 @@ class BinanceStreamProducer:
                 return
 
             symbol = msg["symbol"]
-            self._producer.send(TOPIC, key=symbol, value=msg)
+            future = self._producer.send(TOPIC, key=symbol, value=msg)
+            future.add_errback(lambda e: self._log.error("kafka_send_failed", exc=str(e)))
 
             # Update metrics
             self._msg_counter += 1
